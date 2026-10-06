@@ -9,23 +9,19 @@ import (
 	"github.com/mhsanaei/3x-ui/v3/database"
 	"github.com/mhsanaei/3x-ui/v3/database/model"
 	"github.com/mhsanaei/3x-ui/v3/logger"
-	"github.com/mhsanaei/3x-ui/v3/xray"
-	"gorm.io/gorm"
 )
 
 type InboundTrafficMonitor struct {
-	mu                 sync.RWMutex
-	lastSnapshot       map[uint]*model.TrafficSnapshot // inbound_id -> snapshot
-	lastUpdateTime     map[uint]time.Time
-	refreshInterval    time.Duration
-	retentionDays      int
-	ctx                context.Context
-	cancel             context.CancelFunc
-	xrayService        *XrayService
-	inboundService     *InboundService
-	settingService     *SettingService
-	monitoringActive   bool
-	lastCleanupTime    time.Time
+	mu              sync.RWMutex
+	lastSnapshot    map[uint]*model.TrafficSnapshot
+	lastUpdateTime  map[uint]time.Time
+	refreshInterval time.Duration
+	retentionDays   int
+	ctx             context.Context
+	cancel          context.CancelFunc
+	inboundService  *InboundService
+	monitoringActive bool
+	lastCleanupTime time.Time
 }
 
 var (
@@ -34,11 +30,7 @@ var (
 )
 
 // InitTrafficMonitor initializes the traffic monitor
-func InitTrafficMonitor(
-	xraySvc *XrayService,
-	inboundSvc *InboundService,
-	settingSvc *SettingService,
-) *InboundTrafficMonitor {
+func InitTrafficMonitor(inboundSvc *InboundService) *InboundTrafficMonitor {
 	trafficMonitorMu.Lock()
 	defer trafficMonitorMu.Unlock()
 
@@ -50,12 +42,11 @@ func InitTrafficMonitor(
 		retentionDays:   7,                // default 7 days
 		ctx:             ctx,
 		cancel:          cancel,
-		xrayService:     xraySvc,
 		inboundService:  inboundSvc,
-		settingService:  settingSvc,
 		lastCleanupTime: time.Now(),
 	}
 
+	trafficMonitor = tm
 	return tm
 }
 
@@ -99,7 +90,9 @@ func (tm *InboundTrafficMonitor) StopMonitoring() {
 	tm.monitoringActive = false
 	tm.mu.Unlock()
 
-	tm.cancel()
+	if tm.cancel != nil {
+		tm.cancel()
+	}
 	logger.Info("Inbound traffic monitoring stopped")
 }
 
@@ -128,9 +121,9 @@ func (tm *InboundTrafficMonitor) SetRetentionDays(days int) error {
 }
 
 // GetConfig returns current monitoring configuration
-func (tm *InboundTrafficMonitor) GetConfig() *model.TrafficMonitorConfig {
+func (tm *InboundTrafficMonitor) GetConfig() *model.TrafficMonitorSettings {
 	if tm == nil {
-		return &model.TrafficMonitorConfig{
+		return &model.TrafficMonitorSettings{
 			RefreshInterval: 5,
 			RetentionDays:   7,
 		}
@@ -138,7 +131,7 @@ func (tm *InboundTrafficMonitor) GetConfig() *model.TrafficMonitorConfig {
 
 	tm.mu.RLock()
 	defer tm.mu.RUnlock()
-	return &model.TrafficMonitorConfig{
+	return &model.TrafficMonitorSettings{
 		RefreshInterval: int(tm.refreshInterval.Seconds()),
 		RetentionDays:   tm.retentionDays,
 	}
@@ -242,19 +235,18 @@ func (tm *InboundTrafficMonitor) collectTrafficMetrics() {
 
 // calculateTrafficSnapshot calculates traffic metrics for a single inbound
 func (tm *InboundTrafficMonitor) calculateTrafficSnapshot(inbound *model.Inbound, now time.Time) *model.TrafficSnapshot {
-	// Get traffic data from xray
 	var up, down int64
 	var connCount int
 
-	// Try to get client traffic stats if available
-	if tm.xrayService != nil {
-		// Get aggregated traffic for this inbound
-		// This reads from Xray's stats API or internal counters
-		stats := tm.xrayService.GetInboundStats(inbound.Tag)
-		if stats != nil {
-			up = stats.GetUplink()
-			down = stats.GetDownlink()
-			connCount = stats.GetConnectionCount()
+	// Get traffic from inbound clients
+	if tm.inboundService != nil {
+		clientTraffics, _ := tm.inboundService.GetClientTraffics(inbound.ID)
+		for _, ct := range clientTraffics {
+			up += ct.Up
+			down += ct.Down
+			if ct.Enable && ct.ExpiryTime > now.Unix() {
+				connCount++
+			}
 		}
 	}
 
@@ -343,23 +335,4 @@ func (tm *InboundTrafficMonitor) cleanupOldRecords() {
 	}
 
 	logger.Debugf("Traffic history cleanup completed (retention: %d days)", retentionDays)
-}
-
-// BroadcastTrafficUpdate broadcasts current traffic to all WebSocket clients
-func (tm *InboundTrafficMonitor) BroadcastTrafficUpdate(hub interface{}) {
-	if tm == nil {
-		return
-	}
-
-	snapshots := tm.GetCurrentTraffic()
-	if len(snapshots) == 0 {
-		return
-	}
-
-	// Type assert to Hub if needed for broadcasting
-	// This will be called from the monitoring loop
-	if h, ok := hub.(*interface{}); ok && h != nil {
-		// Broadcasting logic handled by caller
-		_ = snapshots
-	}
 }
