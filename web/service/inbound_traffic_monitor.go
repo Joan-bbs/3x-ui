@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
@@ -13,326 +14,275 @@ import (
 
 type InboundTrafficMonitor struct {
 	mu              sync.RWMutex
-	lastSnapshot    map[uint]*model.TrafficSnapshot
-	lastUpdateTime  map[uint]time.Time
+	lastSnapshot    map[int]*model.TrafficHistory
+	lastUpdateTime  map[int]time.Time
 	refreshInterval time.Duration
 	retentionDays   int
-	ctx             context.Context
-	cancel          context.CancelFunc
-	inboundService  *InboundService
-	monitoringActive bool
-	lastCleanupTime time.Time
+
+	inboundService *InboundService
+	ctx            context.Context
+	cancel         context.CancelFunc
+
+	started bool
 }
 
 var (
-	trafficMonitorMu sync.Mutex
-	trafficMonitor   *InboundTrafficMonitor
+	monitorMu sync.Mutex
+	monitor   *InboundTrafficMonitor
 )
 
-// InitTrafficMonitor initializes the traffic monitor
-func InitTrafficMonitor(inboundSvc *InboundService) *InboundTrafficMonitor {
-	trafficMonitorMu.Lock()
-	defer trafficMonitorMu.Unlock()
+func InitInboundTrafficMonitor(inboundService *InboundService) *InboundTrafficMonitor {
+	monitorMu.Lock()
+	defer monitorMu.Unlock()
+
+	if monitor != nil {
+		return monitor
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	tm := &InboundTrafficMonitor{
-		lastSnapshot:    make(map[uint]*model.TrafficSnapshot),
-		lastUpdateTime:  make(map[uint]time.Time),
-		refreshInterval: 5 * time.Second, // default 5s
-		retentionDays:   7,                // default 7 days
+	monitor = &InboundTrafficMonitor{
+		lastSnapshot:    make(map[int]*model.TrafficHistory),
+		lastUpdateTime:  make(map[int]time.Time),
+		refreshInterval: 5 * time.Second,
+		retentionDays:   7,
+		inboundService:  inboundService,
 		ctx:             ctx,
 		cancel:          cancel,
-		inboundService:  inboundSvc,
-		lastCleanupTime: time.Now(),
 	}
-
-	trafficMonitor = tm
-	return tm
+	return monitor
 }
 
-// GetTrafficMonitor returns the global traffic monitor instance
-func GetTrafficMonitor() *InboundTrafficMonitor {
-	trafficMonitorMu.Lock()
-	defer trafficMonitorMu.Unlock()
-	return trafficMonitor
+func GetInboundTrafficMonitor() *InboundTrafficMonitor {
+	return monitor
 }
 
-// StartMonitoring starts the real-time traffic monitoring
-func (tm *InboundTrafficMonitor) StartMonitoring() error {
-	if tm == nil {
-		return fmt.Errorf("traffic monitor not initialized")
-	}
-
-	tm.mu.Lock()
-	if tm.monitoringActive {
-		tm.mu.Unlock()
-		return fmt.Errorf("monitoring already active")
-	}
-	tm.monitoringActive = true
-	tm.mu.Unlock()
-
-	go tm.monitoringLoop()
-	logger.Info("Inbound traffic monitoring started")
-	return nil
-}
-
-// StopMonitoring stops the traffic monitoring
-func (tm *InboundTrafficMonitor) StopMonitoring() {
-	if tm == nil {
-		return
-	}
-
-	tm.mu.Lock()
-	if !tm.monitoringActive {
-		tm.mu.Unlock()
-		return
-	}
-	tm.monitoringActive = false
-	tm.mu.Unlock()
-
-	if tm.cancel != nil {
-		tm.cancel()
-	}
-	logger.Info("Inbound traffic monitoring stopped")
-}
-
-// SetRefreshInterval sets the monitoring refresh interval (1, 5, 10 seconds)
-func (tm *InboundTrafficMonitor) SetRefreshInterval(seconds int) error {
+func (m *InboundTrafficMonitor) SetRefreshInterval(seconds int) error {
 	if seconds != 1 && seconds != 5 && seconds != 10 {
-		return fmt.Errorf("invalid refresh interval: %d, must be 1, 5, or 10", seconds)
+		return fmt.Errorf("refresh interval must be 1, 5 or 10 seconds")
 	}
-
-	tm.mu.Lock()
-	defer tm.mu.Unlock()
-	tm.refreshInterval = time.Duration(seconds) * time.Second
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.refreshInterval = time.Duration(seconds) * time.Second
 	return nil
 }
 
-// SetRetentionDays sets the historical data retention period (7, 30, 90 days)
-func (tm *InboundTrafficMonitor) SetRetentionDays(days int) error {
+func (m *InboundTrafficMonitor) SetRetentionDays(days int) error {
 	if days != 7 && days != 30 && days != 90 {
-		return fmt.Errorf("invalid retention days: %d, must be 7, 30, or 90", days)
+		return fmt.Errorf("retention must be 7, 30 or 90 days")
 	}
-
-	tm.mu.Lock()
-	defer tm.mu.Unlock()
-	tm.retentionDays = days
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.retentionDays = days
 	return nil
 }
 
-// GetConfig returns current monitoring configuration
-func (tm *InboundTrafficMonitor) GetConfig() *model.TrafficMonitorSettings {
-	if tm == nil {
-		return &model.TrafficMonitorSettings{
-			RefreshInterval: 5,
-			RetentionDays:   7,
-		}
-	}
+func (m *InboundTrafficMonitor) GetConfig() model.TrafficMonitorSettings {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 
-	tm.mu.RLock()
-	defer tm.mu.RUnlock()
-	return &model.TrafficMonitorSettings{
-		RefreshInterval: int(tm.refreshInterval.Seconds()),
-		RetentionDays:   tm.retentionDays,
+	return model.TrafficMonitorSettings{
+		RefreshInterval: int(m.refreshInterval.Seconds()),
+		RetentionDays:   m.retentionDays,
 	}
 }
 
-// GetCurrentTraffic returns current traffic snapshot for all inbounds
-func (tm *InboundTrafficMonitor) GetCurrentTraffic() []*model.TrafficSnapshot {
-	if tm == nil {
-		return []*model.TrafficSnapshot{}
+func (m *InboundTrafficMonitor) Start() error {
+	if m == nil {
+		return fmt.Errorf("monitor is nil")
 	}
-
-	tm.mu.RLock()
-	defer tm.mu.RUnlock()
-
-	snapshots := make([]*model.TrafficSnapshot, 0, len(tm.lastSnapshot))
-	for _, snap := range tm.lastSnapshot {
-		if snap != nil {
-			snapshots = append(snapshots, snap)
-		}
+	m.mu.Lock()
+	if m.started {
+		m.mu.Unlock()
+		return nil
 	}
-	return snapshots
+	m.started = true
+	m.mu.Unlock()
+
+	go m.loop()
+	logger.Info("Inbound traffic monitor started")
+	return nil
 }
 
-// GetTrafficHistory retrieves historical traffic data
-func (tm *InboundTrafficMonitor) GetTrafficHistory(inboundID uint, hours int) ([]*model.TrafficHistory, error) {
-	if tm == nil {
-		return nil, fmt.Errorf("traffic monitor not initialized")
+func (m *InboundTrafficMonitor) Stop() {
+	if m == nil {
+		return
 	}
-
-	db := database.DB
-	if db == nil {
-		return nil, fmt.Errorf("database not initialized")
+	m.mu.Lock()
+	if !m.started {
+		m.mu.Unlock()
+		return
 	}
+	m.started = false
+	m.mu.Unlock()
 
-	var histories []*model.TrafficHistory
-	from := time.Now().Add(-time.Duration(hours) * time.Hour)
-
-	if err := db.Where("inbound_id = ? AND created_at >= ?", inboundID, from).
-		Order("created_at ASC").
-		Find(&histories).Error; err != nil {
-		return nil, err
+	if m.cancel != nil {
+		m.cancel()
 	}
-
-	return histories, nil
+	logger.Info("Inbound traffic monitor stopped")
 }
 
-// monitoringLoop is the main monitoring loop
-func (tm *InboundTrafficMonitor) monitoringLoop() {
-	ticker := time.NewTicker(tm.refreshInterval)
+func (m *InboundTrafficMonitor) loop() {
+	ticker := time.NewTicker(m.refreshInterval)
 	defer ticker.Stop()
 
-	cleanupTicker := time.NewTicker(1 * time.Hour)
+	cleanupTicker := time.NewTicker(time.Hour)
 	defer cleanupTicker.Stop()
 
 	for {
 		select {
-		case <-tm.ctx.Done():
+		case <-m.ctx.Done():
 			return
-
 		case <-ticker.C:
-			// Update refresh interval if changed
-			tm.mu.RLock()
-			interval := tm.refreshInterval
-			tm.mu.RUnlock()
-
-			if ticker.Stop() {
-				ticker.Reset(interval)
-			}
-
-			tm.collectTrafficMetrics()
-
+			m.collect()
 		case <-cleanupTicker.C:
-			tm.cleanupOldRecords()
+			m.cleanupExpiredHistory()
 		}
 	}
 }
 
-// collectTrafficMetrics collects current traffic metrics for all inbounds
-func (tm *InboundTrafficMonitor) collectTrafficMetrics() {
-	inbounds, err := tm.inboundService.GetAllInbounds()
+func (m *InboundTrafficMonitor) collect() {
+	if m == nil || m.inboundService == nil {
+		return
+	}
+
+	inbounds, err := m.inboundService.GetAllInbounds()
 	if err != nil {
-		logger.Debugf("Failed to get inbounds: %v", err)
+		logger.Debugf("get all inbounds failed: %v", err)
 		return
 	}
 
 	now := time.Now()
-	tm.mu.Lock()
-	defer tm.mu.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	for _, inbound := range inbounds {
-		snapshot := tm.calculateTrafficSnapshot(inbound, now)
-		if snapshot != nil {
-			tm.lastSnapshot[inbound.ID] = snapshot
-			tm.lastUpdateTime[inbound.ID] = now
+		if inbound == nil {
+			continue
 		}
-	}
 
-	// Save to database
-	go tm.saveTrafficRecords()
-}
-
-// calculateTrafficSnapshot calculates traffic metrics for a single inbound
-func (tm *InboundTrafficMonitor) calculateTrafficSnapshot(inbound *model.Inbound, now time.Time) *model.TrafficSnapshot {
-	var up, down int64
-	var connCount int
-
-	// Get traffic from inbound clients
-	if tm.inboundService != nil {
-		clientTraffics, _ := tm.inboundService.GetClientTraffics(inbound.ID)
-		for _, ct := range clientTraffics {
-			up += ct.Up
-			down += ct.Down
-			if ct.Enable && ct.ExpiryTime > now.Unix() {
-				connCount++
-			}
+		snap := &model.TrafficHistory{
+			InboundID:       uint(inbound.Id),
+			InboundTag:      inbound.Tag,
+			UpBytes:         inbound.Up,
+			DownBytes:       inbound.Down,
+			ConnectionCount: m.estimateActiveConnections(inbound),
+			CreatedAt:       now.UnixMilli(),
 		}
-	}
 
-	// Calculate speed
-	var upSpeed, downSpeed float64
-	lastTime, exists := tm.lastUpdateTime[inbound.ID]
-	if exists && !lastTime.Equal(now) {
-		elapsed := now.Sub(lastTime).Seconds()
-		if elapsed > 0 {
-			lastSnap := tm.lastSnapshot[inbound.ID]
-			if lastSnap != nil {
-				upSpeed = float64(up-lastSnap.UpBytes) / elapsed
-				downSpeed = float64(down-lastSnap.DownBytes) / elapsed
-				if upSpeed < 0 {
-					upSpeed = 0
-				}
-				if downSpeed < 0 {
-					downSpeed = 0
+		if prev, ok := m.lastSnapshot[inbound.Id]; ok {
+			if prevTime, ok2 := m.lastUpdateTime[inbound.Id]; ok2 {
+				elapsed := now.Sub(prevTime).Seconds()
+				if elapsed > 0 {
+					snap.UpSpeed = float64(snap.UpBytes-prev.UpBytes) / elapsed
+					snap.DownSpeed = float64(snap.DownBytes-prev.DownBytes) / elapsed
+
+					if snap.UpSpeed < 0 {
+						snap.UpSpeed = 0
+					}
+					if snap.DownSpeed < 0 {
+						snap.DownSpeed = 0
+					}
 				}
 			}
 		}
+
+		m.lastSnapshot[inbound.Id] = snap
+		m.lastUpdateTime[inbound.Id] = now
 	}
 
-	return &model.TrafficSnapshot{
-		InboundID:       inbound.ID,
-		InboundTag:      inbound.Tag,
-		UpBytes:         up,
-		DownBytes:       down,
-		UpSpeed:         upSpeed,
-		DownSpeed:       downSpeed,
-		ConnectionCount: connCount,
-		UpdatedAt:       now,
-	}
+	m.persistCurrent()
 }
 
-// saveTrafficRecords saves current traffic snapshots to database
-func (tm *InboundTrafficMonitor) saveTrafficRecords() {
-	db := database.DB
+func (m *InboundTrafficMonitor) estimateActiveConnections(inbound *model.Inbound) int {
+	if inbound == nil {
+		return 0
+	}
+
+	var settings map[string]any
+	if err := json.Unmarshal([]byte(inbound.Settings), &settings); err != nil {
+		return 0
+	}
+
+	clients, ok := settings["clients"].([]any)
+	if !ok {
+		return 0
+	}
+
+	count := 0
+	for _, item := range clients {
+		c, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		if enable, ok2 := c["enable"].(bool); ok2 && enable {
+			count++
+		}
+	}
+	return count
+}
+
+func (m *InboundTrafficMonitor) persistCurrent() {
+	db := database.GetDB()
 	if db == nil {
 		return
 	}
 
-	tm.mu.RLock()
-	snapshots := make([]*model.TrafficSnapshot, 0, len(tm.lastSnapshot))
-	for _, snap := range tm.lastSnapshot {
-		if snap != nil {
-			snapshots = append(snapshots, snap)
+	for _, snap := range m.lastSnapshot {
+		if snap == nil {
+			continue
 		}
-	}
-	tm.mu.RUnlock()
-
-	for _, snap := range snapshots {
-		history := &model.TrafficHistory{
-			InboundID:       snap.InboundID,
-			InboundTag:      snap.InboundTag,
-			UpBytes:         snap.UpBytes,
-			DownBytes:       snap.DownBytes,
-			UpSpeed:         snap.UpSpeed,
-			DownSpeed:       snap.DownSpeed,
-			ConnectionCount: snap.ConnectionCount,
-			CreatedAt:       snap.UpdatedAt,
-		}
-
-		if err := db.Create(history).Error; err != nil {
-			logger.Debugf("Failed to save traffic history: %v", err)
+		if err := db.Create(snap).Error; err != nil {
+			logger.Debugf("save traffic monitor history failed: %v", err)
 		}
 	}
 }
 
-// cleanupOldRecords removes old traffic history records based on retention policy
-func (tm *InboundTrafficMonitor) cleanupOldRecords() {
-	db := database.DB
+func (m *InboundTrafficMonitor) cleanupExpiredHistory() {
+	db := database.GetDB()
 	if db == nil {
 		return
 	}
 
-	tm.mu.RLock()
-	retentionDays := tm.retentionDays
-	tm.mu.RUnlock()
+	m.mu.RLock()
+	retentionDays := m.retentionDays
+	m.mu.RUnlock()
 
-	cutoffTime := time.Now().AddDate(0, 0, -retentionDays)
+	cutoff := time.Now().AddDate(0, 0, -retentionDays).UnixMilli()
+	if err := db.Where("created_at < ?", cutoff).
+		Delete(&model.TrafficHistory{}).Error; err != nil {
+		logger.Debugf("cleanup traffic history failed: %v", err)
+	}
+}
 
-	if err := db.Where("created_at < ?", cutoffTime).Delete(&model.TrafficHistory{}).Error; err != nil {
-		logger.Debugf("Failed to cleanup old traffic records: %v", err)
-		return
+func (m *InboundTrafficMonitor) GetCurrentTraffic() []*model.TrafficHistory {
+	if m == nil {
+		return nil
 	}
 
-	logger.Debugf("Traffic history cleanup completed (retention: %d days)", retentionDays)
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	out := make([]*model.TrafficHistory, 0, len(m.lastSnapshot))
+	for _, v := range m.lastSnapshot {
+		if v != nil {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+func (m *InboundTrafficMonitor) GetHistoryByInbound(inboundID int, hours int) ([]*model.TrafficHistory, error) {
+	db := database.GetDB()
+	if db == nil {
+		return nil, fmt.Errorf("database not initialized")
+	}
+
+	since := time.Now().Add(-time.Duration(hours) * time.Hour).UnixMilli()
+	var rows []*model.TrafficHistory
+	if err := db.Where("inbound_id = ? AND created_at >= ?", inboundID, since).
+		Order("created_at ASC").
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
 }
