@@ -26,6 +26,7 @@ func (a *XUIController) initRouter(g *gin.RouterGroup) {
 
 	g.GET("/", a.index)
 	g.GET("/inbounds", a.inbounds)
+	g.GET("/inbound-monitor", a.inboundMonitor)
 	g.GET("/settings", a.settings)
 	g.GET("/xray", a.xraySettings)
 
@@ -41,6 +42,11 @@ func (a *XUIController) index(c *gin.Context) {
 // inbounds renders the inbounds management page.
 func (a *XUIController) inbounds(c *gin.Context) {
 	html(c, "inbounds.html", "pages.inbounds.title", nil)
+}
+
+// inboundMonitor renders the authenticated per-port speed monitor.
+func (a *XUIController) inboundMonitor(c *gin.Context) {
+	html(c, "inbound_monitor.html", "pages.inboundMonitor.title", nil)
 }
 
 // settings renders the settings management page.

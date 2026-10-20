@@ -1,0 +1,81 @@
+{{ template "page/head_start" .}}
+<style>
+  .inbound-monitor .monitor-toolbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 16px; }
+  .inbound-monitor .monitor-search { width: 280px; max-width: 100%; }
+  .inbound-monitor .monitor-summary { margin-bottom: 16px; }
+  .inbound-monitor .monitor-summary .ant-statistic-title,
+  .inbound-monitor .monitor-summary .ant-statistic-content { color: inherit; }
+  .inbound-monitor .monitor-summary .ant-statistic-title { opacity: .7; }
+  .inbound-monitor.dark .monitor-summary .ant-statistic { color: var(--dark-color-text-primary); }
+  .inbound-monitor .monitor-note { margin-top: 16px; opacity: .7; }
+  .inbound-monitor .monitor-speed { white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .inbound-monitor .ant-alert { margin-bottom: 16px; }
+  @media (max-width: 767px) {
+    .inbound-monitor .monitor-toolbar { padding-top: 32px; }
+  }
+</style>
+{{ template "page/head_end" .}}
+{{ template "page/body_start" .}}
+<a-layout id="app" v-cloak :class="themeSwitcher.currentTheme + ' inbound-monitor'">
+  <a-sidebar></a-sidebar>
+  <a-layout id="content-layout">
+    <a-layout-content>
+      <a-card title='{{ i18n "pages.inboundMonitor.title" }}' :bordered="false">
+        <div class="monitor-toolbar">
+          <a-input-search class="monitor-search" v-model="search" allow-clear placeholder='{{ i18n "pages.inboundMonitor.search" }}'></a-input-search>
+          <a-button @click="togglePaused" :icon="paused ? 'caret-right' : 'pause'">
+            [[ paused ? '{{ i18n "pages.inboundMonitor.resume" }}' : '{{ i18n "pages.inboundMonitor.pause" }}' ]]
+          </a-button>
+          <a-button icon="reload" @click="refresh" :loading="loading" :disabled="paused">{{ i18n "pages.inboundMonitor.refresh" }}</a-button>
+          <span v-if="sampledAt">{{ i18n "pages.inboundMonitor.updated" }}: [[ new Date(sampledAt).toLocaleTimeString() ]]</span>
+        </div>
+        <a-alert v-if="failed" type="error" show-icon message='{{ i18n "pages.inboundMonitor.error" }}'></a-alert>
+        <a-alert v-else-if="paused" type="info" show-icon message='{{ i18n "pages.inboundMonitor.paused" }}'></a-alert>
+        <a-alert v-else-if="fetched && !running" type="warning" show-icon message='{{ i18n "pages.inboundMonitor.stopped" }}'></a-alert>
+        <a-alert v-else-if="running && !statsEnabled" type="warning" show-icon message='{{ i18n "pages.inboundMonitor.statsDisabled" }}'></a-alert>
+        <a-alert v-else-if="!ready" type="info" show-icon message='{{ i18n "pages.inboundMonitor.sampling" }}'></a-alert>
+        <a-row :gutter="16" class="monitor-summary">
+          <a-col :xs="24" :sm="12">
+            <a-statistic title='{{ i18n "pages.inboundMonitor.totalUpload" }}' :value="live && ready ? formatSpeed(totalUp) : '—'">
+              <a-icon slot="prefix" type="arrow-up"></a-icon>
+            </a-statistic>
+          </a-col>
+          <a-col :xs="24" :sm="12">
+            <a-statistic title='{{ i18n "pages.inboundMonitor.totalDownload" }}' :value="live && ready ? formatSpeed(totalDown) : '—'">
+              <a-icon slot="prefix" type="arrow-down"></a-icon>
+            </a-statistic>
+          </a-col>
+        </a-row>
+        <a-table :columns="columns" :data-source="filteredRows" row-key="id" size="small" :scroll="{ x: 800 }"
+          :pagination="{ defaultPageSize: 20, showSizeChanger: true, pageSizeOptions: ['20', '50', '100'] }" :loading="loading && !fetched"
+          :locale="{ emptyText: '{{ i18n "noData" }}' }">
+          <template slot="remark" slot-scope="value">[[ value || '—' ]]</template>
+          <template slot="listen" slot-scope="value">[[ value || '0.0.0.0' ]]</template>
+          <template slot="status" slot-scope="value, row">
+            <a-tag :color="row.enable ? 'green' : 'red'">[[ row.enable ? '{{ i18n "enabled" }}' : '{{ i18n "disabled" }}' ]]</a-tag>
+          </template>
+          <template slot="speed" slot-scope="value, row">
+            <span class="monitor-speed">[[ live && ready && row.ready ? formatSpeed(value) : '—' ]]</span>
+          </template>
+        </a-table>
+        <p class="monitor-note">{{ i18n "pages.inboundMonitor.note" }}</p>
+      </a-card>
+    </a-layout-content>
+  </a-layout>
+</a-layout>
+{{ template "page/body_scripts" .}}
+{{ template "component/aSidebar" .}}
+{{ template "component/aThemeSwitch" .}}
+<script src="{{ .base_path }}assets/js/inbound-monitor.js?{{ .cur_ver }}"></script>
+<script>
+  const app = new Vue(createInboundMonitorOptions({
+    remark: '{{ i18n "remark" }}',
+    port: '{{ i18n "pages.inboundMonitor.port" }}',
+    listen: '{{ i18n "monitor" }}',
+    protocol: '{{ i18n "protocol" }}',
+    status: '{{ i18n "status" }}',
+    upload: '{{ i18n "pages.inboundMonitor.upload" }}',
+    download: '{{ i18n "pages.inboundMonitor.download" }}',
+  }));
+</script>
+{{ template "page/body_end" .}}

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"math"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/mhsanaei/3x-ui/v2/logger"
@@ -237,6 +238,31 @@ func (x *XrayAPI) GetTraffic(reset bool) ([]*Traffic, []*ClientTraffic, error) {
 		}
 	}
 	return mapToSlice(tagTrafficMap), mapToSlice(emailTrafficMap), nil
+}
+
+// GetInboundTraffic reads only inbound counters and never resets them.
+// Avoid fetching every client's statistics on each monitor refresh.
+func (x *XrayAPI) GetInboundTraffic() ([]*Traffic, error) {
+	if x.grpcClient == nil || x.StatsServiceClient == nil {
+		return nil, common.NewError("xray stats API is not initialized")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	resp, err := (*x.StatsServiceClient).QueryStats(ctx, &statsService.QueryStatsRequest{
+		Pattern: "inbound>>>", Reset_: false,
+	})
+	if err != nil {
+		return nil, err
+	}
+	trafficMap := make(map[string]*Traffic)
+	for _, stat := range resp.GetStat() {
+		parts := strings.Split(stat.Name, ">>>")
+		if len(parts) != 4 || parts[0] != "inbound" || parts[2] != "traffic" || (parts[3] != "uplink" && parts[3] != "downlink") {
+			continue
+		}
+		processTraffic([]string{stat.Name, parts[0], parts[1], parts[3]}, stat.Value, trafficMap)
+	}
+	return mapToSlice(trafficMap), nil
 }
 
 // processTraffic aggregates a traffic stat into trafficMap using regex matches and value.

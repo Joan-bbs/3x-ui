@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"github.com/mhsanaei/3x-ui/v2/database/model"
+	"github.com/mhsanaei/3x-ui/v2/web/monitor"
 	"github.com/mhsanaei/3x-ui/v2/web/service"
 	"github.com/mhsanaei/3x-ui/v2/web/session"
 	"github.com/mhsanaei/3x-ui/v2/web/websocket"
@@ -30,6 +31,7 @@ func NewInboundController(g *gin.RouterGroup) *InboundController {
 func (a *InboundController) initRouter(g *gin.RouterGroup) {
 
 	g.GET("/list", a.getInbounds)
+	g.GET("/speeds", a.getInboundSpeeds)
 	g.GET("/get/:id", a.getInbound)
 	g.GET("/getClientTraffics/:email", a.getClientTraffics)
 	g.GET("/getClientTrafficsById/:id", a.getClientTrafficsById)
@@ -51,6 +53,49 @@ func (a *InboundController) initRouter(g *gin.RouterGroup) {
 	g.POST("/lastOnline", a.lastOnline)
 	g.POST("/updateClientTraffic/:email", a.updateClientTraffic)
 	g.POST("/:id/delClientByEmail/:email", a.delInboundClientByEmail)
+}
+
+// getInboundSpeeds exposes only the current user's inbound metadata and rates.
+func (a *InboundController) getInboundSpeeds(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	user := session.GetLoginUser(c)
+	inbounds, err := a.inboundService.GetInboundsForMonitor(user.Id)
+	if err != nil {
+		jsonObj(c, nil, err)
+		return
+	}
+	snapshot, err := a.xrayService.GetInboundSpeeds()
+	if err != nil {
+		jsonObj(c, nil, err)
+		return
+	}
+	type inboundSpeed struct {
+		ID       int            `json:"id"`
+		Remark   string         `json:"remark"`
+		Port     int            `json:"port"`
+		Listen   string         `json:"listen"`
+		Protocol model.Protocol `json:"protocol"`
+		Enable   bool           `json:"enable"`
+		monitor.Rate
+	}
+	rows := make([]inboundSpeed, 0, len(inbounds))
+	for _, inbound := range inbounds {
+		rate, exists := snapshot.Rates[inbound.Tag]
+		if !exists {
+			rate.Ready = snapshot.Ready
+		}
+		if !inbound.Enable {
+			rate = monitor.Rate{Ready: true}
+		}
+		rows = append(rows, inboundSpeed{
+			ID: inbound.Id, Remark: inbound.Remark, Port: inbound.Port,
+			Listen: inbound.Listen, Protocol: inbound.Protocol, Enable: inbound.Enable, Rate: rate,
+		})
+	}
+	jsonObj(c, gin.H{
+		"inbounds": rows, "running": snapshot.Running, "statsEnabled": snapshot.StatsEnabled,
+		"ready": snapshot.Ready, "sampledAt": snapshot.SampledAt,
+	}, nil)
 }
 
 // getInbounds retrieves the list of inbounds for the logged-in user.

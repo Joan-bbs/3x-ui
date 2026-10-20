@@ -196,6 +196,9 @@ func (s *XrayService) GetXrayConfig() (*xray.Config, error) {
 
 // GetXrayTraffic fetches the current traffic statistics from the running Xray process.
 func (s *XrayService) GetXrayTraffic() ([]*xray.Traffic, []*xray.ClientTraffic, error) {
+	// Serialize destructive quota reads with monitor samples and process restarts.
+	lock.Lock()
+	defer lock.Unlock()
 	if !s.IsXrayRunning() {
 		err := errors.New("xray is not running")
 		logger.Debug("Attempted to fetch Xray traffic, but Xray is not running:", err)
@@ -208,8 +211,10 @@ func (s *XrayService) GetXrayTraffic() ([]*xray.Traffic, []*xray.ClientTraffic, 
 	traffic, clientTraffic, err := s.xrayAPI.GetTraffic(true)
 	if err != nil {
 		logger.Debug("Failed to fetch Xray traffic:", err)
+		inboundSpeedCache = inboundSpeedState{}
 		return nil, nil, err
 	}
+	inboundSpeedCache.tracker.Consumed(inboundCounters(traffic))
 	return traffic, clientTraffic, nil
 }
 
@@ -233,6 +238,7 @@ func (s *XrayService) RestartXray(isForce bool) error {
 		p.Stop()
 	}
 
+	inboundSpeedCache = inboundSpeedState{}
 	p = xray.NewProcess(xrayConfig)
 	result = ""
 	err = p.Start()
@@ -248,6 +254,7 @@ func (s *XrayService) StopXray() error {
 	lock.Lock()
 	defer lock.Unlock()
 	isManuallyStopped.Store(true)
+	inboundSpeedCache = inboundSpeedState{}
 	logger.Debug("Attempting to stop Xray...")
 	if s.IsXrayRunning() {
 		return p.Stop()
