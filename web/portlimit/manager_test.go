@@ -205,8 +205,18 @@ func TestKernelLimit(t *testing.T) {
 	if err := m.Set(r); err != nil {
 		t.Fatal(err)
 	}
+	for _, direction := range []string{"ingress", "egress"} {
+		out, _ := exec.Command("tc", "-j", "filter", "show", "dev", "pl0", direction, "pref", "49152").CombinedOutput()
+		t.Logf("filters %s: %s", direction, out)
+	}
 	r.Upload = 15
 	if err := m.Set(r); err != nil {
+		for _, direction := range []string{"ingress", "egress"} {
+			out, _ := exec.Command("tc", "-j", "filter", "show", "dev", "pl0", direction).CombinedOutput()
+			t.Logf("remaining filters %s: %s", direction, out)
+		}
+		out, _ := exec.Command("tc", "-j", "actions", "list", "action", "police").CombinedOutput()
+		t.Logf("remaining actions: %s", out)
 		t.Fatal("update", err)
 	}
 	if err := m.Restore(); err != nil {
