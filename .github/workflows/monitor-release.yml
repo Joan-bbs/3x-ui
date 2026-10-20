@@ -1,0 +1,95 @@
+name: Release Inbound Monitor
+
+on:
+  push:
+    branches: [feat/v2.8.8-inbound-speed-monitor]
+    paths:
+      - '.github/workflows/monitor-release.yml'
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'New immutable tag, for example v2.8.8-monitor.1'
+        required: true
+        default: 'v2.8.8-monitor.1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: inbound-monitor-release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Install static C toolchain
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: Validate and test
+        run: |
+          test "$(cat config/version)" = '2.8.8'
+          test -f web/html/inbound_monitor.html
+          bash -n install-monitor.sh
+          bash tests/install-monitor.test.sh
+          go test ./xray ./web/monitor
+          node --test web/assets/js/inbound-monitor.test.cjs
+      - name: Build static monitor binary
+        env:
+          CGO_ENABLED: '1'
+          CC: musl-gcc
+        run: |
+          mkdir -p package/x-ui dist
+          go build -trimpath -tags netgo,osusergo,sqlite_omit_load_extension -ldflags "-s -w -linkmode external -extldflags '-static'" -o package/x-ui/x-ui main.go
+          test "$(package/x-ui/x-ui -v)" = '2.8.8'
+          file package/x-ui/x-ui | tee binary-info.txt
+          grep -q 'statically linked' binary-info.txt
+          printf '%s\n' "$GITHUB_SHA" > package/x-ui/SOURCE_COMMIT
+          tar -czf dist/x-ui-linux-${{ matrix.arch }}.tar.gz -C package x-ui
+      - uses: actions/upload-artifact@v4
+        with:
+          name: monitor-${{ matrix.arch }}
+          path: dist/*.tar.gz
+
+  release:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      RELEASE_TAG: ${{ inputs.release_tag || 'v2.8.8-monitor.1' }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: monitor-*
+          merge-multiple: true
+          path: dist
+      - name: Publish verified binaries
+        run: |
+          [[ "$RELEASE_TAG" =~ ^v2\.8\.8-monitor\.[0-9]+$ ]]
+          # Never overwrite a published version; choose a new tag for each release.
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Release already exists. Run again with a new release_tag."
+            exit 1
+          fi
+          (cd dist && sha256sum x-ui-linux-*.tar.gz > SHA256SUMS)
+          cat > release-notes.md <<NOTES
+          3x-ui v2.8.8 入站监控版，源码提交：$GITHUB_SHA
+          Linux amd64/ARM64 静态程序，VPS 安装时无需 Go 或 GCC。
+          使用本分支 install-monitor.sh 安装；全新安装会自动部署官方 v2.8.8 基础环境。
+          此附件仅包含监控面板程序，升级时沿用原 Xray、数据库和配置。
+          NOTES
+          gh release create "$RELEASE_TAG" dist/* --target "$GITHUB_SHA" --title "3x-ui $RELEASE_TAG" --notes-file release-notes.md --prerelease

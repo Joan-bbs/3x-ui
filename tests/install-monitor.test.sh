@@ -69,14 +69,14 @@ set -e
 [[ $(grep -c '^start ' "$test_root/rollback/install/service-calls") == 2 ]]
 printf 'PASS: failed startup restores original binary and service\n'
 
-# Validate architecture mapping.
+# Validate supported native binary architecture mapping.
 (
     uname() { printf 'aarch64\n'; }
     detect_arch
-    [[ $go_arch == arm64 && $download_arch == arm64 ]]
-    uname() { printf 'armv7l\n'; }
+    [[ $download_arch == arm64 ]]
+    uname() { printf 'x86_64\n'; }
     detect_arch
-    [[ $go_arch == arm && $download_arch == armv6l && $go_arm == 7 ]]
+    [[ $download_arch == amd64 ]]
 )
 printf 'PASS: architecture mapping\n'
 
@@ -91,3 +91,34 @@ if command -v sha256sum >/dev/null 2>&1; then
 else
     printf 'SKIP: checksum test requires sha256sum (not supplied in minimal Git Bash)\n'
 fi
+
+# Real archive extraction with mocked network: no download may stop a live panel.
+(
+    work_dir="$test_root/download"
+    mkdir -p "$work_dir" "$test_root/fixture/x-ui"
+    printf '#!/bin/sh\nprintf "2.8.8\\n"\n' > "$test_root/fixture/x-ui/x-ui"
+    tar -czf "$test_root/fixture/x-ui-linux-amd64.tar.gz" -C "$test_root/fixture" x-ui
+    (cd "$test_root/fixture" && sha256sum x-ui-linux-amd64.tar.gz > SHA256SUMS)
+    fetch() { cp "$test_root/fixture/${1##*/}" "$2"; }
+    download_arch=amd64
+    download_monitor
+    [[ $("$work_dir/x-ui-monitor" -v) == 2.8.8 && $stopped == 0 ]]
+)
+printf 'PASS: verified prebuilt archive installs without compiler\n'
+
+set +e
+(
+    work_dir="$test_root/bad-download"; mkdir -p "$work_dir"
+    download_arch=amd64
+    fetch() {
+        case "$1" in
+            */SHA256SUMS) printf '%064d  x-ui-linux-amd64.tar.gz\n' 0 > "$2" ;;
+            *) printf 'corrupted data\n' > "$2" ;;
+        esac
+    }
+    download_monitor
+)
+result=$?
+set -e
+[[ $result != 0 && $stopped == 0 ]]
+printf 'PASS: bad download fails before service changes\n'

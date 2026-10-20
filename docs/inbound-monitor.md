@@ -10,21 +10,32 @@
 
 接口为登录鉴权下的 `GET /panel/api/inbounds/speeds`（支持自定义面板根路径），只返回当前账号的入站元数据及速度，不返回客户端配置。Xray 的 `policy.system.statsInboundUplink` 和 `statsInboundDownlink` 需启用；v2.8.8 默认配置已启用。此功能统计 Xray 逻辑入站流量，不包含网卡的协议开销或其他进程流量。
 
-## 编译与安装
+## 一键安装（服务器无需编译）
 
-已经通过官方脚本安装 **v2.8.8** 的服务器，可使用 root 运行一键升级命令：
+本仓库 Actions 的 **Release Inbound Monitor** 会在 GitHub 服务器构建 Linux amd64、ARM64 静态程序并发布到 Releases。首个版本为 `v2.8.8-monitor.1`；**必须等该工作流两个架构均构建成功、Release 附件出现后再运行安装命令**。
+
+root 用户执行：
 
 ```bash
 bash <(curl -fsSL "https://raw.githubusercontent.com/Joan-bbs/3x-ui/feat/v2.8.8-inbound-speed-monitor/install-monitor.sh")
 ```
 
-一键脚本适用于使用 systemd、默认程序路径 `/usr/local/x-ui` 和默认数据库目录 `/etc/x-ui` 的 Linux 安装。它自动安装编译依赖，在临时目录下载并校验 Go 1.25.6，编译固定提交 `146e2a8c9e1b427ac95cf425cf73a1b8da4e5b2f` 的监控功能。编译通过后才停服，将原程序目录和数据库备份到 `/var/backups/x-ui-monitor/时间-进程号/`，然后仅替换面板可执行文件。账号、入站、证书、面板地址和 Xray 文件保留；启动检查失败自动恢复原程序和原服务状态。备份会保留，临时源码和工具链会删除。
+已有标准 systemd v2.8.8 安装：下载监控程序和 SHA256SUMS，校验后备份原目录及数据库，只替换面板程序。无需 Go、GCC 或在 VPS 上编译，临时下载保存在磁盘 `/var/tmp`，避开小容量 `/tmp` 内存盘。升级保留 Xray、账号、入站、证书、端口和面板路径；启动失败会尝试恢复原程序，备份位于 `/var/backups/x-ui-monitor/`。原服务停止时保持停止。
 
-首次编译需要下载依赖，耗时取决于服务器性能及网络；升级期间会短暂停服。脚本不会全局安装或替换系统 Go，不会执行官方更新菜单。没有安装面板、版本不是 v2.8.8、使用 Docker/OpenRC 或自定义安装/数据库路径时会停止；这些环境请先安装官方 v2.8.8 或按下方方式手动编译。服务启动检查只确认进程持续运行，完成后仍应登录面板验证实际入站流量。
+全新安装：先下载并验证监控包，再自动调用固定版本的官方 v2.8.8 安装脚本部署基础环境（按官方提示设置账号/证书），最后替换监控程序。全新安装会下载官方基础包和监控包，均不需要编译。只支持 systemd、标准路径 `/usr/local/x-ui`、默认数据库 `/etc/x-ui`；其他版本、自定义路径、Docker/OpenRC 会拒绝。
 
-如需手动恢复，备份中的 `program/x-ui` 是原程序，`data/` 是停服后复制的数据库目录；停止服务后替换原程序，再启动服务。数据库备份仅供需要时手动恢复，脚本不会自动覆盖现有数据库。
+手动发布：Actions → Release Inbound Monitor → Run workflow，分支选择 `feat/v2.8.8-inbound-speed-monitor`，填写未使用的新标签（如 `v2.8.8-monitor.2`）。发布工作流不会覆盖旧版本。安装指定新版本：
 
-原来的 `VERSION=v2.8.8` 官方安装命令下载的是官方发布包，不包含这个分支的修改。仅将安装脚本地址改为本仓库也不会生成新程序；应编译此分支，或使用由此分支构建的发布包。
+```bash
+curl -fLsS "https://raw.githubusercontent.com/Joan-bbs/3x-ui/feat/v2.8.8-inbound-speed-monitor/install-monitor.sh" -o /root/install-monitor.sh
+MONITOR_VERSION=v2.8.8-monitor.2 bash /root/install-monitor.sh
+```
+
+工作流首次修改推送到此分支时自动触发首次构建；如果 fork 的 Actions 未启用，先在 Actions 页面启用，再手动运行。默认安装版本固定为 `v2.8.8-monitor.1`，发布新版后应显式指定版本或更新脚本默认值。不要通过官方更新菜单覆盖监控版。
+
+发布包尚不存在、下载失败或校验失败会在停服前退出，不会退回 VPS 编译。安装完成仍需登录面板确认真实代理流量。
+
+原源码编译安装器保留为 `install-monitor-source.sh`（仍需服务器编译，临时目录已改为 `/var/tmp`）。下面仅供需要自行构建的用户：
 
 在与服务器架构匹配的 Linux 环境中，准备 Go 1.25.6 或更高版本、Git、GCC 后执行：
 

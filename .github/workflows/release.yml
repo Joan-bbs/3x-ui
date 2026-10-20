@@ -23,6 +23,7 @@ on:
 
 jobs:
   build:
+    if: ${{ !contains(github.ref, '-monitor.') }}
     permissions:
       contents: write
     strategy:
@@ -155,6 +156,7 @@ jobs:
   #  Windows Build
   # =================================
   build-windows:
+    if: ${{ !contains(github.ref, '-monitor.') }}
     name: Build for Windows
     permissions:
       contents: write
