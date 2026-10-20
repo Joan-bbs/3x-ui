@@ -12,6 +12,18 @@
 
 ## 编译与安装
 
+已经通过官方脚本安装 **v2.8.8** 的服务器，可使用 root 运行一键升级命令：
+
+```bash
+bash <(curl -fsSL "https://raw.githubusercontent.com/Joan-bbs/3x-ui/feat/v2.8.8-inbound-speed-monitor/install-monitor.sh")
+```
+
+一键脚本适用于使用 systemd、默认程序路径 `/usr/local/x-ui` 和默认数据库目录 `/etc/x-ui` 的 Linux 安装。它自动安装编译依赖，在临时目录下载并校验 Go 1.25.6，编译固定提交 `146e2a8c9e1b427ac95cf425cf73a1b8da4e5b2f` 的监控功能。编译通过后才停服，将原程序目录和数据库备份到 `/var/backups/x-ui-monitor/时间-进程号/`，然后仅替换面板可执行文件。账号、入站、证书、面板地址和 Xray 文件保留；启动检查失败自动恢复原程序和原服务状态。备份会保留，临时源码和工具链会删除。
+
+首次编译需要下载依赖，耗时取决于服务器性能及网络；升级期间会短暂停服。脚本不会全局安装或替换系统 Go，不会执行官方更新菜单。没有安装面板、版本不是 v2.8.8、使用 Docker/OpenRC 或自定义安装/数据库路径时会停止；这些环境请先安装官方 v2.8.8 或按下方方式手动编译。服务启动检查只确认进程持续运行，完成后仍应登录面板验证实际入站流量。
+
+如需手动恢复，备份中的 `program/x-ui` 是原程序，`data/` 是停服后复制的数据库目录；停止服务后替换原程序，再启动服务。数据库备份仅供需要时手动恢复，脚本不会自动覆盖现有数据库。
+
 原来的 `VERSION=v2.8.8` 官方安装命令下载的是官方发布包，不包含这个分支的修改。仅将安装脚本地址改为本仓库也不会生成新程序；应编译此分支，或使用由此分支构建的发布包。
 
 在与服务器架构匹配的 Linux 环境中，准备 Go 1.25.6 或更高版本、Git、GCC 后执行：
@@ -29,6 +41,8 @@ CGO_ENABLED=1 go build -trimpath -ldflags "-s -w" -o x-ui main.go
 ```bash
 go test ./xray ./web/monitor ./web/service ./web/controller ./web
 node --test web/assets/js/inbound-monitor.test.cjs
+bash -n install-monitor.sh
+bash tests/install-monitor.test.sh
 CGO_ENABLED=1 go build ./...
 ```
 
