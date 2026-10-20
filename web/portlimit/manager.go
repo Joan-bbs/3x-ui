@@ -18,6 +18,27 @@ import (
 
 const cookie = "33787569706f72746c696d6974"
 
+// iproute2 versions encode flower handles as either JSON numbers or hex strings.
+type filterHandle string
+
+func (h *filterHandle) UnmarshalJSON(data []byte) error {
+	var value uint64
+	var text string
+	if json.Unmarshal(data, &text) == nil {
+		n, err := strconv.ParseUint(text, 0, 32)
+		if err != nil {
+			return err
+		}
+		value = n
+	} else {
+		if err := json.Unmarshal(data, &value); err != nil {
+			return err
+		}
+	}
+	*h = filterHandle(fmt.Sprintf("0x%x", value))
+	return nil
+}
+
 type Rule struct {
 	ID        int    `json:"id"`
 	UserID    int    `json:"userId"`
@@ -212,7 +233,7 @@ func (m *Manager) install(r Rule) error {
 				}
 				var filters []struct {
 					Options struct {
-						Handle  string            `json:"handle"`
+						Handle  filterHandle      `json:"handle"`
 						Actions []json.RawMessage `json:"actions"`
 					} `json:"options"`
 				}
@@ -220,7 +241,7 @@ func (m *Manager) install(r Rule) error {
 					return err
 				}
 				for _, f := range filters {
-					if f.Options.Handle == args[10] {
+					if string(f.Options.Handle) == args[10] {
 						data, _ := json.Marshal(f.Options.Actions)
 						if !strings.Contains(strings.ToLower(string(data)), cookie) {
 							return errors.New("过滤器编号被其他程序占用，拒绝覆盖")
@@ -263,7 +284,7 @@ func (m *Manager) remove(r Rule) error {
 			}
 			var filters []struct {
 				Options struct {
-					Handle  string            `json:"handle"`
+					Handle  filterHandle      `json:"handle"`
 					Actions []json.RawMessage `json:"actions"`
 				} `json:"options"`
 			}
@@ -274,7 +295,7 @@ func (m *Manager) remove(r Rule) error {
 			for transport := 0; transport < 2; transport++ {
 				handle := fmt.Sprintf("0x%x", r.Port*2+transport)
 				for _, f := range filters {
-					if f.Options.Handle != handle {
+					if string(f.Options.Handle) != handle {
 						continue
 					}
 					data, _ := json.Marshal(f.Options.Actions)

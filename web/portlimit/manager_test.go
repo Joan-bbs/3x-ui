@@ -281,3 +281,12 @@ func TestKernelLimit(t *testing.T) {
 		}
 	}
 }
+
+func TestFilterHandleFormats(t *testing.T) {
+	for _, encoded := range []string{`131070`, `"0x1fffe"`, `"131070"`} {
+		var h filterHandle
+		if err := json.Unmarshal([]byte(encoded), &h); err != nil || h != "0x1fffe" {
+			t.Fatal(encoded, h, err)
+		}
+	}
+}
