@@ -5,6 +5,7 @@ on:
     branches: [feat/v2.8.8-inbound-speed-monitor]
     paths:
       - '.github/workflows/monitor-release.yml'
+      - 'web/portlimit/**'
   workflow_dispatch:
     inputs:
       release_tag:

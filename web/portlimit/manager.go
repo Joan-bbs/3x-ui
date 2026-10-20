@@ -200,7 +200,7 @@ func (m *Manager) install(r Rule) error {
 		if burst < 131072 {
 			burst = 131072
 		}
-		if err = m.cmd("actions", op, "action", "police", "rate", fmt.Sprintf("%dmbit", rate), "burst", strconv.Itoa(burst), "mtu", "65535", "conform-exceed", "drop/ok", "index", id, "cookie", cookie); err != nil {
+		if err = m.cmd("actions", op, "action", "police", "rate", fmt.Sprintf("%dmbit", rate), "burst", strconv.Itoa(burst), "mtu", "65535", "conform-exceed", "drop/ok", "index", id, "cookie", cookie, "skip_hw"); err != nil {
 			return err
 		}
 		for family := 0; family < 2; family++ {
