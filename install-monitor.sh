@@ -105,7 +105,8 @@ check_installation() {
         die '检测到自定义 XUI_DB_FOLDER，请按文档手动安装并备份实际数据库。'
     fi
     if systemctl show "$SERVICE" -p Environment --value | grep -q 'XUI_DB_FOLDER=' ||
-        grep -Eq '^[[:space:]]*(export[[:space:]]+)?XUI_DB_FOLDER=' /etc/default/x-ui "$INSTALL_DIR/.env" 2>/dev/null; then
+        grep -Eq '^[[:space:]]*(export[[:space:]]+)?XUI_DB_FOLDER[[:space:]]*=' \
+            /etc/default/x-ui /etc/sysconfig/x-ui /etc/conf.d/x-ui "$INSTALL_DIR/.env" 2>/dev/null; then
         die '检测到数据库目录环境配置，请按文档手动安装并备份实际数据库。'
     fi
     [[ -f "$DATA_DIR/x-ui.db" ]] || die '未找到默认数据库 /etc/x-ui/x-ui.db，请确认安装路径。'
