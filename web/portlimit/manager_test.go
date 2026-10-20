@@ -12,11 +12,12 @@ import (
 )
 
 type fakeTC struct {
-	actions  map[string]bool
-	filters  map[string][]string
-	calls    []string
-	failOnce bool
-	deny     bool
+	actions     map[string]bool
+	filters     map[string][]string
+	calls       []string
+	failOnce    bool
+	deny        bool
+	busyDeletes int
 }
 
 func newFake() *fakeTC { return &fakeTC{actions: map[string]bool{}, filters: map[string][]string{}} }
@@ -298,5 +299,29 @@ func TestFilterHandleFormats(t *testing.T) {
 		if err := json.Unmarshal([]byte(encoded), &h); err != nil || h != "0x1fffe" {
 			t.Fatal(encoded, h, err)
 		}
+	}
+}
+
+func TestDeferredActionRelease(t *testing.T) {
+	f := newFake()
+	busy := true
+	run := func(args ...string) ([]byte, error) {
+		if len(args) > 1 && args[0] == "actions" && args[1] == "del" && busy {
+			busy = false
+			return nil, fmt.Errorf("Failed to delete TC action")
+		}
+		return f.run(args...)
+	}
+	m := mockManager(filepath.Join(t.TempDir(), "limits.json"), run)
+	r := Rule{ID: 1, UserID: 1, Port: 443, Interface: "pl0", Upload: 10}
+	if err := m.Set(r); err != nil {
+		t.Fatal(err)
+	}
+	r.Upload = 0
+	if err := m.Set(r); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.actions) != 0 || len(f.filters) != 0 {
+		t.Fatal("action references left")
 	}
 }

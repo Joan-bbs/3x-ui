@@ -314,8 +314,17 @@ func (m *Manager) remove(r Rule) error {
 			}
 		}
 		if len(errs) == 0 {
-			if err = m.cmd("actions", "del", "action", "police", "index", id); err != nil {
-				errs = append(errs, err)
+			// Filter destruction releases shared action references after an RCU grace period.
+			for attempt := 0; attempt < 20; attempt++ {
+				err = m.cmd("actions", "del", "action", "police", "index", id)
+				if err == nil || !strings.Contains(err.Error(), "Failed to delete TC action") {
+					break
+				}
+				time.Sleep(50 * time.Millisecond)
+			}
+			if err != nil {
+				out, _ := m.run("-j", "actions", "get", "action", "police", "index", id)
+				errs = append(errs, fmt.Errorf("%w; action state: %s", err, out))
 			}
 		}
 	}
