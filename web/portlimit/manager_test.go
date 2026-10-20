@@ -139,6 +139,11 @@ func TestLimitLifecycle(t *testing.T) {
 		t.Fatal("residual limits")
 	}
 	for _, call := range f.calls {
+		if strings.HasPrefix(call, "actions add ") || strings.HasPrefix(call, "actions replace ") {
+			if !strings.Contains(call, "skip_hw") {
+				t.Fatal("shared action must use the filter's software-only flags", call)
+			}
+		}
 		if strings.Contains(call, "qdisc del") || strings.Contains(call, " root") || strings.Contains(call, "flush") {
 			t.Fatal("destructive tc command", call)
 		}
