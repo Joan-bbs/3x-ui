@@ -27,6 +27,7 @@ func (a *XUIController) initRouter(g *gin.RouterGroup) {
 	g.GET("/", a.index)
 	g.GET("/inbounds", a.inbounds)
 	g.GET("/inbound-monitor", a.inboundMonitor)
+	g.GET("/port-limits", func(c *gin.Context) { html(c, "port_limits.html", "端口限速", nil) })
 	g.GET("/settings", a.settings)
 	g.GET("/xray", a.xraySettings)
 

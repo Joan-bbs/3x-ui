@@ -1,0 +1,36 @@
+{{ template "page/head_start" .}}
+{{ template "page/head_end" .}}
+{{ template "page/body_start" .}}
+<a-layout id="app" v-cloak :class="themeSwitcher.currentTheme">
+ <a-sidebar></a-sidebar>
+ <a-layout id="content-layout"><a-layout-content>
+  <a-card title="端口限速" :bordered="false">
+   <a-alert type="info" show-icon message="按端口设置上传和下载上限，单位 Mbps；0 表示不限速。" description="上传：客户端 → 服务器；下载：服务器 → 客户端。同一端口的 TCP、UDP、IPv4、IPv6 合计限速，所有连接共用上限。超额流量会丢包，允许短时突发。" style="margin-bottom:16px"></a-alert>
+   <a-alert v-if="error" type="error" show-icon :message="error" style="margin-bottom:16px"></a-alert>
+   <a-alert v-if="!available" type="warning" show-icon message="未找到 tc，请通过新版一键脚本安装限速依赖。" style="margin-bottom:16px"></a-alert>
+   <a-space style="margin-bottom:16px"><a-input-search v-model="search" placeholder="搜索端口或备注" allow-clear></a-input-search><a-button @click="refresh" :loading="loading" icon="reload">刷新</a-button></a-space>
+   <a-table :columns="columns" :data-source="filtered" :row-key="r => r.id + ':' + r.port" :scroll="{x:850}" :pagination="{pageSize:20}" :loading="loading">
+    <template slot="rate" slot-scope="v">[[ v ? v + ' Mbps' : '不限速' ]]</template>
+    <template slot="state" slot-scope="v,r"><a-tag :color="r.orphan ? 'orange' : r.configured ? 'green' : undefined">[[ r.orphan ? '旧端口规则' : r.configured ? '已配置' : '不限速' ]]</a-tag></template>
+    <template slot="actions" slot-scope="v,r">
+     <a-space><a-button size="small" @click="edit(r)" :disabled="!available || r.orphan">设置</a-button>
+     <a-popconfirm title="取消此端口的上传和下载限速？" @confirm="remove(r)"><a-button size="small" type="danger" :disabled="!r.configured || saving">取消限速</a-button></a-popconfirm></a-space>
+    </template>
+   </a-table>
+   <p style="margin-top:16px;opacity:.7">请选择实际承载客户端流量的网卡。规则在面板启动时自动恢复；入站被删除或更改端口后，请在此取消旧端口规则。转发、隧道或反向代理流量应按实际外层端口配置。</p>
+  </a-card>
+  <a-modal v-model="visible" title="设置端口限速" @ok="save" :confirm-loading="saving" :mask-closable="false" :wrap-class-name="themeSwitcher.currentTheme">
+   <a-form :label-col="{span:6}" :wrapper-col="{span:18}">
+    <a-form-item label="端口">[[ form.port ]]</a-form-item>
+    <a-form-item label="网卡"><a-select v-model="form.interface" style="width:100%"><a-select-option v-for="name in interfaces" :key="name" :value="name">[[name]]</a-select-option></a-select></a-form-item>
+    <a-form-item label="上传 Mbps"><a-input-number v-model="form.upload" :min="0" :max="100000" :precision="0" style="width:100%"></a-input-number></a-form-item>
+    <a-form-item label="下载 Mbps"><a-input-number v-model="form.download" :min="0" :max="100000" :precision="0" style="width:100%"></a-input-number></a-form-item>
+   </a-form>
+  </a-modal>
+ </a-layout-content></a-layout>
+</a-layout>
+{{template "page/body_scripts" .}}
+{{template "component/aSidebar" .}}
+{{template "component/aThemeSwitch" .}}
+<script src="{{ .base_path }}assets/js/port-limits.js?{{ .cur_ver }}"></script>
+{{template "page/body_end" .}}

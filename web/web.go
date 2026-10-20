@@ -441,6 +441,11 @@ func (s *Server) Start() (err error) {
 	}()
 
 	s.startTask()
+	go func() {
+		if err := service.PortLimits.Restore(); err != nil {
+			logger.Warning("恢复端口限速失败：", err)
+		}
+	}()
 
 	isTgbotenabled, err := s.settingService.GetTgbotEnabled()
 	if (err == nil) && (isTgbotenabled) {

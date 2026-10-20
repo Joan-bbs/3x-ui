@@ -4,7 +4,7 @@ set -Eeuo pipefail
 umask 077
 
 RELEASE_REPO='Joan-bbs/3x-ui'
-MONITOR_VERSION=${MONITOR_VERSION:-v2.8.8-monitor.1}
+MONITOR_VERSION=${MONITOR_VERSION:-v2.8.8-monitor.2}
 INSTALL_DIR='/usr/local/x-ui'
 DATA_DIR='/etc/x-ui'
 BACKUP_ROOT='/var/backups/x-ui-monitor'
@@ -29,24 +29,24 @@ detect_arch() {
 
 install_dependencies() {
     local missing=0 tool
-    for tool in curl tar gzip sha256sum flock install; do
+    for tool in curl tar gzip sha256sum flock install ip tc; do
         command -v "$tool" >/dev/null 2>&1 || missing=1
     done
     [[ $missing == 1 ]] || return 0
     log '安装下载和校验工具（无需编译器）……'
     if command -v apt-get >/dev/null 2>&1; then
         apt-get update
-        DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl tar gzip util-linux coreutils
+        DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl tar gzip util-linux coreutils iproute2
     elif command -v dnf >/dev/null 2>&1; then
-        dnf install -y ca-certificates curl tar gzip util-linux coreutils
+        dnf install -y ca-certificates curl tar gzip util-linux coreutils iproute
     elif command -v yum >/dev/null 2>&1; then
-        yum install -y ca-certificates curl tar gzip util-linux coreutils
+        yum install -y ca-certificates curl tar gzip util-linux coreutils iproute
     elif command -v pacman >/dev/null 2>&1; then
-        pacman -S --needed --noconfirm ca-certificates curl tar gzip util-linux coreutils
+        pacman -S --needed --noconfirm ca-certificates curl tar gzip util-linux coreutils iproute2
     elif command -v zypper >/dev/null 2>&1; then
-        zypper --non-interactive install ca-certificates curl tar gzip util-linux coreutils
+        zypper --non-interactive install ca-certificates curl tar gzip util-linux coreutils iproute2
     else
-        die '未找到支持的包管理器，请安装 curl、tar、gzip、sha256sum、flock 后重试。'
+        die '未找到支持的包管理器，请安装 curl、tar、gzip、sha256sum、flock、ip、tc 后重试。'
     fi
 }
 
@@ -157,7 +157,7 @@ replace_binary() {
     done
     fi
     finished=1
-    log '安装完成！登录原面板，在「入站列表」下方打开「入站监控」。'
+    log '安装完成！登录原面板，在侧栏打开「入站监控」或其下方的「端口限速」。'
     log '原账号、入站、证书、面板端口和访问路径保持不变。'
 }
 

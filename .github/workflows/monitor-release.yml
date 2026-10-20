@@ -8,9 +8,9 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: 'New immutable tag, for example v2.8.8-monitor.1'
+        description: 'New immutable tag, for example v2.8.8-monitor.2'
         required: true
-        default: 'v2.8.8-monitor.1'
+        default: 'v2.8.8-monitor.2'
 
 permissions:
   contents: read
@@ -36,14 +36,16 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Install static C toolchain
-        run: sudo apt-get update && sudo apt-get install -y musl-tools
+        run: sudo apt-get update && sudo apt-get install -y musl-tools iproute2 iperf3
       - name: Validate and test
         run: |
           test "$(cat config/version)" = '2.8.8'
           test -f web/html/inbound_monitor.html
           bash -n install-monitor.sh
           bash tests/install-monitor.test.sh
-          go test ./xray ./web/monitor
+          go test ./xray ./web/monitor ./web/portlimit
+          go test -c -o "$RUNNER_TEMP/portlimit.test" ./web/portlimit
+          timeout 90s sudo unshare --net bash -euc 'ip link add pl0 type veth peer name pl1; ip link set pl0 up; ip link set pl1 up; PORT_LIMIT_KERNEL=1 "$1" -test.v -test.run TestKernelLimit' _ "$RUNNER_TEMP/portlimit.test"
           node --test web/assets/js/inbound-monitor.test.cjs
       - name: Build static monitor binary
         env:
@@ -69,7 +71,7 @@ jobs:
       contents: write
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      RELEASE_TAG: ${{ inputs.release_tag || 'v2.8.8-monitor.1' }}
+      RELEASE_TAG: ${{ inputs.release_tag || 'v2.8.8-monitor.2' }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/download-artifact@v4
@@ -88,7 +90,7 @@ jobs:
           (cd dist && sha256sum x-ui-linux-*.tar.gz > SHA256SUMS)
           cat > release-notes.md <<NOTES
           3x-ui v2.8.8 入站监控版，源码提交：$GITHUB_SHA
-          Linux amd64/ARM64 静态程序，VPS 安装时无需 Go 或 GCC。
+          Linux amd64/ARM64 静态程序，含入站监控与端口限速，VPS 安装时无需 Go 或 GCC。
           使用本分支 install-monitor.sh 安装；全新安装会自动部署官方 v2.8.8 基础环境。
           此附件仅包含监控面板程序，升级时沿用原 Xray、数据库和配置。
           NOTES

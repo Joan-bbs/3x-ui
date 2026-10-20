@@ -32,6 +32,8 @@ func (a *InboundController) initRouter(g *gin.RouterGroup) {
 
 	g.GET("/list", a.getInbounds)
 	g.GET("/speeds", a.getInboundSpeeds)
+	g.GET("/portLimits", a.getPortLimits)
+	g.POST("/portLimits", a.setPortLimit)
 	g.GET("/get/:id", a.getInbound)
 	g.GET("/getClientTraffics/:email", a.getClientTraffics)
 	g.GET("/getClientTrafficsById/:id", a.getClientTrafficsById)
